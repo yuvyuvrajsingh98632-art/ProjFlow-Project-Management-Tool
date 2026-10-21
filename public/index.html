@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ProjFlow - Project Management Tool</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Socket.io connection from backend port 5000 -->
+    <script src="http://localhost:5000/socket.io/socket.io.js"></script>
+</head>
+<body class="bg-gray-100 font-sans">
+    <div class="max-w-7xl mx-auto p-6">
+        <header class="flex justify-between items-center mb-6 bg-white p-4 rounded-xl shadow">
+            <h1 class="text-2xl font-black text-indigo-600">📊 ProjFlow (Trello/Asana Clone)</h1>
+            <div id="userInfo" class="text-sm font-semibold text-gray-600"></div>
+        </header>
+
+        <!-- Auth Section -->
+        <div id="authSection" class="bg-white p-6 rounded-xl shadow max-w-md mx-auto">
+            <h2 class="text-xl font-bold mb-4">Login / Register</h2>
+            <div class="space-y-4">
+                <input type="text" id="username" placeholder="Username (For Register)" class="w-full border p-2 rounded">
+                <input type="email" id="email" placeholder="Email Address" class="w-full border p-2 rounded">
+                <input type="password" id="password" placeholder="Password" class="w-full border p-2 rounded">
+                <div class="flex gap-2">
+                    <button onclick="login()" class="flex-1 bg-indigo-600 text-white p-2 rounded font-bold hover:bg-indigo-700">Login</button>
+                    <button onclick="register()" class="flex-1 bg-gray-800 text-white p-2 rounded font-bold hover:bg-gray-900">Register</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Dashboard -->
+        <div id="dashboard" class="hidden">
+            <div class="bg-white p-6 rounded-xl shadow mb-6">
+                <h2 class="text-lg font-bold mb-3">Create New Project</h2>
+                <div class="flex gap-4">
+                    <input type="text" id="projTitle" placeholder="Project Title" class="border p-2 rounded flex-1">
+                    <input type="text" id="projDesc" placeholder="Description" class="border p-2 rounded flex-1">
+                    <button onclick="createProject()" class="bg-green-600 text-white px-6 py-2 rounded font-bold">Create</button>
+                </div>
+            </div>
+
+            <h3 class="text-xl font-bold mb-4">Projects</h3>
+            <div id="projectList" class="grid grid-cols-3 gap-4 mb-8"></div>
+
+            <div id="boardView" class="hidden bg-white p-6 rounded-xl shadow">
+                <h2 id="activeProjectTitle" class="text-2xl font-black text-gray-800 mb-4"></h2>
+                
+                <div class="bg-gray-50 p-4 rounded-lg mb-6 flex gap-4">
+                    <input type="text" id="taskTitle" placeholder="Task Title" class="border p-2 rounded flex-1">
+                    <input type="text" id="taskDesc" placeholder="Description" class="border p-2 rounded flex-1">
+                    <input type="text" id="taskAssignee" placeholder="Assign To" class="border p-2 rounded w-40">
+                    <button onclick="createTask()" class="bg-indigo-600 text-white px-4 py-2 rounded font-bold">Add Task</button>
+                </div>
+
+                <div class="grid grid-cols-3 gap-4">
+                    <div class="bg-gray-100 p-4 rounded-xl">
+                        <h4 class="font-bold text-gray-700 mb-3">📌 Todo</h4>
+                        <div id="todoList" class="space-y-3"></div>
+                    </div>
+                    <div class="bg-gray-100 p-4 rounded-xl">
+                        <h4 class="font-bold text-gray-700 mb-3">⏳ In Progress</h4>
+                        <div id="inProgressList" class="space-y-3"></div>
+                    </div>
+                    <div class="bg-gray-100 p-4 rounded-xl">
+                        <h4 class="font-bold text-gray-700 mb-3">✅ Done</h4>
+                        <div id="doneList" class="space-y-3"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_URL = 'http://localhost:5000';
+        const socket = io(API_URL);
+        let currentUser = localStorage.getItem('username') || null;
+        let currentProjectId = null;
+
+        if (currentUser) {
+            document.getElementById('authSection').classList.add('hidden');
+            document.getElementById('dashboard').classList.remove('hidden');
+            document.getElementById('userInfo').innerText = `Logged in as: ${currentUser}`;
+            fetchProjects();
+        }
+
+        async function register() {
+            const username = document.getElementById('username').value;
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+            const res = await fetch(`${API_URL}/api/auth/register`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, email, password })
+            });
+            const data = await res.json();
+            if(res.ok) alert('Registration successful! Now login.');
+            else alert(data.error);
+        }
+
+        async function login() {
+            const email = document.getElementById('email').value;
+            const password = document.getElementById('password').value;
+            const res = await fetch(`${API_URL}/api/auth/login`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email, password })
+            });
+            const data = await res.json();
+            if(res.ok) {
+                localStorage.setItem('username', data.username);
+                currentUser = data.username;
+                document.getElementById('authSection').classList.add('hidden');
+                document.getElementById('dashboard').classList.remove('hidden');
+                document.getElementById('userInfo').innerText = `Logged in as: ${currentUser}`;
+                fetchProjects();
+            } else {
+                alert(data.error);
+            }
+        }
+
+        async function fetchProjects() {
+            const res = await fetch(`${API_URL}/api/projects`);
+            const projects = await res.json();
+            document.getElementById('projectList').innerHTML = projects.map(p => `
+                <div onclick="selectProject('${p._id}', '${p.title}')" class="bg-white p-4 rounded-xl shadow cursor-pointer border-2 hover:border-indigo-500">
+                    <h4 class="font-bold text-lg text-indigo-600">${p.title}</h4>
+                    <p class="text-sm text-gray-500">${p.description || ''}</p>
+                </div>
+            `).join('');
+        }
+
+        async function createProject() {
+            const title = document.getElementById('projTitle').value;
+            const description = document.getElementById('projDesc').value;
+            if(!title) return;
+            await fetch(`${API_URL}/api/projects`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ title, description })
+            });
+            document.getElementById('projTitle').value = '';
+            document.getElementById('projDesc').value = '';
+            fetchProjects();
+        }
+
+        async function selectProject(id, title) {
+            currentProjectId = id;
+            document.getElementById('boardView').classList.remove('hidden');
+            document.getElementById('activeProjectTitle').innerText = `Board: ${title}`;
+            socket.emit('join_project', id);
+            loadTasks();
+        }
+
+        async function loadTasks() {
+            const res = await fetch(`${API_URL}/api/projects/${currentProjectId}`);
+            const data = await res.json();
+            renderTasks(data.tasks);
+        }
+
+        function renderTasks(tasks) {
+            document.getElementById('todoList').innerHTML = '';
+            document.getElementById('inProgressList').innerHTML = '';
+            document.getElementById('doneList').innerHTML = '';
+
+            tasks.forEach(t => {
+                let commentsHtml = t.comments.map(c => `<div class="text-xs bg-gray-50 p-1 rounded mt-1"><b>${c.author}:</b> ${c.text}</div>`).join('');
+                const card = `
+                    <div class="bg-white p-4 rounded-xl shadow border">
+                        <h5 class="font-bold text-gray-800">${t.title}</h5>
+                        <p class="text-xs text-gray-500">${t.description || ''}</p>
+                        <div class="mt-2 text-xs font-semibold text-indigo-500">👤 ${t.assignedTo}</div>
+                        <div class="mt-2 max-h-20 overflow-y-auto">${commentsHtml}</div>
+                        <div class="mt-2 flex gap-1">
+                            <input type="text" id="comm-${t._id}" placeholder="Comment..." class="border text-xs p-1 rounded flex-1">
+                            <button onclick="addComment('${t._id}')" class="bg-gray-800 text-white text-xs px-2 py-1 rounded">Post</button>
+                        </div>
+                        <div class="mt-3 flex justify-between items-center text-xs pt-2 border-t">
+                            <span class="text-gray-400">${t.status}</span>
+                            <button onclick="moveTask('${t._id}', '${t.status}')" class="text-indigo-600 font-bold">Move &rarr;</button>
+                        </div>
+                    </div>
+                `;
+                if(t.status === 'Todo') document.getElementById('todoList').innerHTML += card;
+                else if(t.status === 'In Progress') document.getElementById('inProgressList').innerHTML += card;
+                else if(t.status === 'Done') document.getElementById('doneList').innerHTML += card;
+            });
+        }
+
+        async function createTask() {
+            const title = document.getElementById('taskTitle').value;
+            const description = document.getElementById('taskDesc').value;
+            const assignedTo = document.getElementById('taskAssignee').value || currentUser;
+            if(!title || !currentProjectId) return;
+            await fetch(`${API_URL}/api/tasks`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ title, description, projectId: currentProjectId, assignedTo })
+            });
+            document.getElementById('taskTitle').value = '';
+            document.getElementById('taskDesc').value = '';
+            document.getElementById('taskAssignee').value = '';
+        }
+
+        async function moveTask(taskId, currentStatus) {
+            let nextStatus = 'Todo';
+            if(currentStatus === 'Todo') nextStatus = 'In Progress';
+            else if(currentStatus === 'In Progress') nextStatus = 'Done';
+            else if(currentStatus === 'Done') nextStatus = 'Todo';
+
+            await fetch(`${API_URL}/api/tasks/${taskId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ status: nextStatus })
+            });
+        }
+
+        async function addComment(taskId) {
+            const input = document.getElementById(`comm-${taskId}`);
+            const text = input.value;
+            if(!text) return;
+            await fetch(`${API_URL}/api/tasks/${taskId}/comments`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ author: currentUser, text })
+            });
+            input.value = '';
+        }
+
+        socket.on('task_update', () => { if(currentProjectId) loadTasks(); });
+        socket.on('comment_update', () => { if(currentProjectId) loadTasks(); });
+    </script>
+</body>
+</html>
